@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  mysql-testing:
+    image: mysql:8.0
+    container_name: mysql-unit-testing
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: unit_testing_db
+      MYSQL_USER: testuser
+      MYSQL_PASSWORD: testpass
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_testing_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  mysql_testing_data:
