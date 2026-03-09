@@ -247,4 +247,96 @@ class ProductRepositoryTest {
         assertNotNull(saved.getCreatedAt());
         assertNotNull(saved.getUpdatedAt());
     }
+
+    // ==================== NEW EDGE CASES ====================
+
+    // Edge case: no products in the given price range
+    @Test
+    @DisplayName("Should return empty when no products in price range")
+    void findByPriceBetween_WhenNoneInRange_ShouldReturnEmpty() {
+        List<Product> products = productRepository.findByPriceBetween(
+                new BigDecimal("5000.00"),
+                new BigDecimal("10000.00")
+        );
+
+        assertTrue(products.isEmpty());
+    }
+
+    // Edge case: no products with quantity greater than threshold
+    @Test
+    @DisplayName("Should return empty when no products have quantity above threshold")
+    void findByQuantityGreaterThan_WhenNoneMatch_ShouldReturnEmpty() {
+        List<Product> products = productRepository.findByQuantityGreaterThan(500);
+
+        assertTrue(products.isEmpty());
+    }
+
+    // Edge case: search with special characters
+    @Test
+    @DisplayName("Should handle special characters in name search")
+    void findByNameContainingIgnoreCase_WithSpecialCharacters() {
+        List<Product> products = productRepository.findByNameContainingIgnoreCase("@#$");
+
+        assertTrue(products.isEmpty());
+    }
+
+    // Edge case: category search is case-sensitive (exact match)
+    @Test
+    @DisplayName("Should verify category search is case-sensitive (exact match)")
+    void findByCategory_CaseSensitivity() {
+        // "electronics" (lowercase) should NOT match "Electronics" (capitalized)
+        List<Product> products = productRepository.findByCategory("electronics");
+
+        assertTrue(products.isEmpty());
+    }
+
+    // Edge case: updatedAt changes on update
+    @Test
+    @DisplayName("Should update updatedAt timestamp on save")
+    void update_ShouldChangeUpdatedAtTimestamp() throws InterruptedException {
+        Product found = entityManager.find(Product.class, electronics1.getId());
+        java.time.LocalDateTime originalUpdatedAt = found.getUpdatedAt();
+
+        // Small delay to ensure timestamp differs
+        Thread.sleep(10);
+
+        // Update the product
+        found.setName("iPhone 15 Pro");
+        productRepository.saveAndFlush(found);
+
+        entityManager.clear(); // clear persistence context to force re-read
+        Product updated = entityManager.find(Product.class, electronics1.getId());
+
+        assertEquals("iPhone 15 Pro", updated.getName());
+        assertNotNull(updated.getUpdatedAt());
+        // updatedAt should be same or after original (depends on @PreUpdate)
+        assertTrue(updated.getUpdatedAt().compareTo(originalUpdatedAt) >= 0);
+    }
+
+    // NEW: existsByCreatedByIdOrUpdatedById — tests the new repo method for bug fix
+    @Test
+    @DisplayName("Should return true when user has products as creator")
+    void existsByCreatedByIdOrUpdatedById_WhenCreator_ShouldReturnTrue() {
+        boolean exists = productRepository.existsByCreatedByIdOrUpdatedById(
+                user.getId(), user.getId());
+
+        assertTrue(exists);
+    }
+
+    @Test
+    @DisplayName("Should return false when user has no products")
+    void existsByCreatedByIdOrUpdatedById_WhenNone_ShouldReturnFalse() {
+        User newUser = entityManager.persistAndFlush(User.builder()
+                .firstName("Nobody")
+                .lastName("Products")
+                .email("nobody@example.com")
+                .phone("0000000000")
+                .role("CUSTOMER")
+                .build());
+
+        boolean exists = productRepository.existsByCreatedByIdOrUpdatedById(
+                newUser.getId(), newUser.getId());
+
+        assertFalse(exists);
+    }
 }

@@ -4,7 +4,9 @@ import com.ecommerce.unittesting.dto.UserRequest;
 import com.ecommerce.unittesting.dto.UserResponse;
 import com.ecommerce.unittesting.entity.User;
 import com.ecommerce.unittesting.exception.DuplicateResourceException;
+import com.ecommerce.unittesting.exception.ResourceInUseException;
 import com.ecommerce.unittesting.exception.ResourceNotFoundException;
+import com.ecommerce.unittesting.repository.ProductRepository;
 import com.ecommerce.unittesting.repository.UserRepository;
 import com.ecommerce.unittesting.service.impl.UserServiceImpl;
 import org.junit.jupiter.api.BeforeEach;
@@ -21,17 +23,25 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 /**
  * @ExtendWith(MockitoExtension.class) — Pure unit test for UserService.
  * No Spring context. No database. Just Mockito mocks.
+ *
+ * TWO MOCK DEPENDENCIES now:
+ *   @Mock UserRepository    → for user CRUD
+ *   @Mock ProductRepository → for checking product dependencies before delete
  */
 @ExtendWith(MockitoExtension.class)
 class UserServiceTest {
 
     @Mock
     private UserRepository userRepository;
+
+    @Mock
+    private ProductRepository productRepository;
 
     @InjectMocks
     private UserServiceImpl userService;
@@ -192,6 +202,18 @@ class UserServiceTest {
         assertEquals("John", users.get(0).getFirstName());
     }
 
+    // NEW: Edge case — empty search string should still call repository
+    @Test
+    @DisplayName("Should return all users when searching with empty string")
+    void searchUsers_WithEmptyString_ShouldReturnResults() {
+        when(userRepository.findByFirstNameContainingIgnoreCase("")).thenReturn(List.of(user));
+
+        List<UserResponse> users = userService.searchUsers("");
+
+        assertEquals(1, users.size());
+        verify(userRepository).findByFirstNameContainingIgnoreCase("");
+    }
+
     // ==================== UPDATE ====================
 
     @Test
@@ -215,6 +237,7 @@ class UserServiceTest {
                 .build();
 
         when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+        when(userRepository.existsByEmailAndIdNot("johnny@example.com", 1L)).thenReturn(false);
         when(userRepository.save(any(User.class))).thenReturn(updatedUser);
 
         UserResponse response = userService.updateUser(1L, updateRequest);
@@ -234,12 +257,72 @@ class UserServiceTest {
         verify(userRepository, never()).save(any(User.class));
     }
 
+    // NEW: Edge case — update user keeping same email should work
+    @Test
+    @DisplayName("Should allow update with same email (no conflict with self)")
+    void updateUser_WithSameEmail_ShouldSucceed() {
+        // User keeps their own email "john@example.com"
+        UserRequest sameEmailRequest = UserRequest.builder()
+                .firstName("Johnny")
+                .lastName("Doe")
+                .email("john@example.com")  // same email as current
+                .phone("9876543210")
+                .role("CUSTOMER")
+                .build();
+
+        User updatedUser = User.builder()
+                .id(1L)
+                .firstName("Johnny")
+                .lastName("Doe")
+                .email("john@example.com")
+                .phone("9876543210")
+                .role("CUSTOMER")
+                .build();
+
+        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+        // existsByEmailAndIdNot returns false because the SAME user has this email
+        when(userRepository.existsByEmailAndIdNot("john@example.com", 1L)).thenReturn(false);
+        when(userRepository.save(any(User.class))).thenReturn(updatedUser);
+
+        UserResponse response = userService.updateUser(1L, sameEmailRequest);
+
+        assertEquals("Johnny", response.getFirstName());
+        assertEquals("john@example.com", response.getEmail());
+        verify(userRepository).save(any(User.class));
+    }
+
+    // NEW: Bug fix test — update user with another user's email should throw exception
+    @Test
+    @DisplayName("Should throw DuplicateResourceException when updating to another user's email")
+    void updateUser_WithAnotherUsersEmail_ShouldThrowException() {
+        UserRequest conflictRequest = UserRequest.builder()
+                .firstName("John")
+                .lastName("Doe")
+                .email("jane@example.com")  // belongs to another user
+                .phone("9876543210")
+                .role("CUSTOMER")
+                .build();
+
+        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+        // Another user already has this email
+        when(userRepository.existsByEmailAndIdNot("jane@example.com", 1L)).thenReturn(true);
+
+        DuplicateResourceException exception = assertThrows(
+                DuplicateResourceException.class,
+                () -> userService.updateUser(1L, conflictRequest)
+        );
+
+        assertEquals("Email already in use: jane@example.com", exception.getMessage());
+        verify(userRepository, never()).save(any(User.class));
+    }
+
     // ==================== DELETE ====================
 
     @Test
-    @DisplayName("Should delete user successfully")
+    @DisplayName("Should delete user successfully when no products")
     void deleteUser_WhenExists_ShouldDeleteSuccessfully() {
         when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+        when(productRepository.existsByCreatedByIdOrUpdatedById(1L, 1L)).thenReturn(false);
         doNothing().when(userRepository).delete(user);
 
         assertDoesNotThrow(() -> userService.deleteUser(1L));
@@ -255,6 +338,24 @@ class UserServiceTest {
         assertThrows(ResourceNotFoundException.class,
                 () -> userService.deleteUser(99L));
 
+        verify(userRepository, never()).delete(any(User.class));
+    }
+
+    // NEW: Bug fix test — delete user who has products should throw ResourceInUseException
+    @Test
+    @DisplayName("Should throw ResourceInUseException when user has associated products")
+    void deleteUser_WhenHasProducts_ShouldThrowException() {
+        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+        // User has products associated
+        when(productRepository.existsByCreatedByIdOrUpdatedById(1L, 1L)).thenReturn(true);
+
+        ResourceInUseException exception = assertThrows(
+                ResourceInUseException.class,
+                () -> userService.deleteUser(1L)
+        );
+
+        assertTrue(exception.getMessage().contains("Cannot delete user"));
+        assertTrue(exception.getMessage().contains("associated products"));
         verify(userRepository, never()).delete(any(User.class));
     }
 }

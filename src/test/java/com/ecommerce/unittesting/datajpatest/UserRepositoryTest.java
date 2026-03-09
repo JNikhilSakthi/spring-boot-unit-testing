@@ -225,4 +225,35 @@ class UserRepositoryTest {
             userRepository.saveAndFlush(duplicateUser);
         });
     }
+
+    // ==================== NEW: existsByEmailAndIdNot tests (for update bug fix) ====================
+
+    // When ANOTHER user has this email → should return true
+    @Test
+    @DisplayName("Should return true when another user has the email")
+    void existsByEmailAndIdNot_WhenAnotherUserHasEmail_ShouldReturnTrue() {
+        // customer1 has "john@example.com", check if someone OTHER than customer2 has it
+        boolean exists = userRepository.existsByEmailAndIdNot("john@example.com", customer2.getId());
+
+        assertTrue(exists); // customer1 has it, and customer1 != customer2
+    }
+
+    // When the SAME user has this email → should return false (no conflict with self)
+    @Test
+    @DisplayName("Should return false when same user has the email (no self-conflict)")
+    void existsByEmailAndIdNot_WhenSameUserHasEmail_ShouldReturnFalse() {
+        // customer1 has "john@example.com", check excluding customer1's own ID
+        boolean exists = userRepository.existsByEmailAndIdNot("john@example.com", customer1.getId());
+
+        assertFalse(exists); // only customer1 has it, and we excluded customer1
+    }
+
+    // When no one has this email → should return false
+    @Test
+    @DisplayName("Should return false when no one has the email")
+    void existsByEmailAndIdNot_WhenNoOneHasEmail_ShouldReturnFalse() {
+        boolean exists = userRepository.existsByEmailAndIdNot("new@example.com", customer1.getId());
+
+        assertFalse(exists);
+    }
 }

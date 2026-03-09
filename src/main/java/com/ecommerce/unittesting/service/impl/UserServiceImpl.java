@@ -4,7 +4,9 @@ import com.ecommerce.unittesting.dto.UserRequest;
 import com.ecommerce.unittesting.dto.UserResponse;
 import com.ecommerce.unittesting.entity.User;
 import com.ecommerce.unittesting.exception.DuplicateResourceException;
+import com.ecommerce.unittesting.exception.ResourceInUseException;
 import com.ecommerce.unittesting.exception.ResourceNotFoundException;
+import com.ecommerce.unittesting.repository.ProductRepository;
 import com.ecommerce.unittesting.repository.UserRepository;
 import com.ecommerce.unittesting.service.UserService;
 import lombok.RequiredArgsConstructor;
@@ -14,15 +16,19 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 // @Service → Business logic layer
-// @RequiredArgsConstructor → Constructor injection for UserRepository
+// @RequiredArgsConstructor → Constructor injection for dependencies
 //
-// ONE DEPENDENCY only (unlike ProductServiceImpl which has TWO)
-// This makes it simpler to test — only one @Mock needed in @ExtendWith tests
+// TWO DEPENDENCIES now:
+//   UserRepository    → for user CRUD operations
+//   ProductRepository → for checking if user has products before deletion
+//
+// In @ExtendWith tests: both are mocked with @Mock, injected via @InjectMocks
 @Service
 @RequiredArgsConstructor
 public class UserServiceImpl implements UserService {
 
     private final UserRepository userRepository;
+    private final ProductRepository productRepository;
 
     // CREATE — with duplicate email check
     // This is business logic that MUST be tested:
@@ -85,10 +91,19 @@ public class UserServiceImpl implements UserService {
                 .collect(Collectors.toList());
     }
 
+    // UPDATE — with duplicate email check for OTHER users
+    // BUG FIX: Previously, updating a user's email to another user's email
+    // would silently succeed, causing a unique constraint violation in DB.
+    // Now we check: does ANOTHER user (id != current) have this email?
     @Override
     public UserResponse updateUser(Long id, UserRequest request) {
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found with id: " + id));
+
+        // Check if another user already has this email (exclude current user)
+        if (userRepository.existsByEmailAndIdNot(request.getEmail(), id)) {
+            throw new DuplicateResourceException("Email already in use: " + request.getEmail());
+        }
 
         user.setFirstName(request.getFirstName());
         user.setLastName(request.getLastName());
@@ -100,10 +115,20 @@ public class UserServiceImpl implements UserService {
         return mapToResponse(updatedUser);
     }
 
+    // DELETE — with product dependency check
+    // BUG FIX: Previously, deleting a user who created products would cause
+    // an ugly 500 error (FK constraint violation). Now we check first and
+    // return a meaningful 409 Conflict response.
     @Override
     public void deleteUser(Long id) {
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found with id: " + id));
+
+        // Check if user has any associated products (createdBy or updatedBy)
+        if (productRepository.existsByCreatedByIdOrUpdatedById(id, id)) {
+            throw new ResourceInUseException("Cannot delete user with id: " + id + " — user has associated products");
+        }
+
         userRepository.delete(user);
     }
 

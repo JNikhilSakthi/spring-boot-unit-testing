@@ -264,4 +264,65 @@ class UserIntegrationTest {
         assertThrows(ResourceNotFoundException.class,
                 () -> userService.getUserById(created.getId()));
     }
+
+    // ==================== NEW INTEGRATION EDGE CASES ====================
+
+    // Bug fix test: update user's email to another user's email should return 409
+    @Test
+    @DisplayName("Integration: Update user with another user's email should return 409")
+    void updateUser_WithAnotherUsersEmail_ShouldReturn409() throws Exception {
+        // Create two users
+        UserResponse john = userService.createUser(userRequest);
+
+        userService.createUser(UserRequest.builder()
+                .firstName("Jane")
+                .lastName("Smith")
+                .email("jane@example.com")
+                .phone("1234567890")
+                .role("ADMIN")
+                .build());
+
+        // Try to update John's email to Jane's email
+        UserRequest conflictRequest = UserRequest.builder()
+                .firstName("John")
+                .lastName("Doe")
+                .email("jane@example.com")  // Jane's email!
+                .phone("9876543210")
+                .role("CUSTOMER")
+                .build();
+
+        mockMvc.perform(put("/api/users/{id}", john.getId())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(conflictRequest)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value("Email already in use: jane@example.com"));
+
+        // Verify John's email didn't change in DB
+        User fromDb = userRepository.findById(john.getId()).orElseThrow();
+        assertEquals("john@example.com", fromDb.getEmail());
+    }
+
+    // Edge case: update user keeping same email should work
+    @Test
+    @DisplayName("Integration: Update user keeping same email should succeed")
+    void updateUser_WithSameEmail_ShouldSucceed() throws Exception {
+        UserResponse created = userService.createUser(userRequest);
+
+        // Update name but keep same email
+        UserRequest sameEmailRequest = UserRequest.builder()
+                .firstName("Johnny")
+                .lastName("Doe")
+                .email("john@example.com")  // same email
+                .phone("9876543210")
+                .role("ADMIN")
+                .build();
+
+        mockMvc.perform(put("/api/users/{id}", created.getId())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(sameEmailRequest)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.firstName").value("Johnny"))
+                .andExpect(jsonPath("$.email").value("john@example.com"))
+                .andExpect(jsonPath("$.role").value("ADMIN"));
+    }
 }

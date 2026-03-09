@@ -308,4 +308,65 @@ class ProductControllerTest {
         mockMvc.perform(delete("/api/products/{id}", 99L))
                 .andExpect(status().isNotFound());
     }
+
+    // ==================== NEW VALIDATION TESTS ====================
+
+    // Validation: negative price should return 400
+    @Test
+    @DisplayName("POST /api/products — Should return 400 when price is negative")
+    void createProduct_WithNegativePrice_ShouldReturn400() throws Exception {
+        ProductRequest invalidRequest = ProductRequest.builder()
+                .name("iPhone 15")
+                .description("Apple smartphone")
+                .price(new BigDecimal("-10.00"))
+                .quantity(50)
+                .category("Electronics")
+                .userId(1L)
+                .build();
+
+        mockMvc.perform(post("/api/products")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(invalidRequest)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors.price").exists());
+    }
+
+    // Validation: negative quantity should return 400
+    @Test
+    @DisplayName("POST /api/products — Should return 400 when quantity is negative")
+    void createProduct_WithNegativeQuantity_ShouldReturn400() throws Exception {
+        ProductRequest invalidRequest = ProductRequest.builder()
+                .name("iPhone 15")
+                .description("Apple smartphone")
+                .price(new BigDecimal("999.99"))
+                .quantity(-5)
+                .category("Electronics")
+                .userId(1L)
+                .build();
+
+        mockMvc.perform(post("/api/products")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(invalidRequest)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors.quantity").exists());
+    }
+
+    // Validation: blank name on update should return 400
+    @Test
+    @DisplayName("PUT /api/products/1 — Should return 400 when name is blank on update")
+    void updateProduct_WithBlankName_ShouldReturn400() throws Exception {
+        ProductRequest invalidRequest = ProductRequest.builder()
+                .name("")
+                .price(new BigDecimal("999.99"))
+                .quantity(50)
+                .category("Electronics")
+                .userId(1L)
+                .build();
+
+        mockMvc.perform(put("/api/products/{id}", 1L)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(invalidRequest)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors.name").exists());
+    }
 }

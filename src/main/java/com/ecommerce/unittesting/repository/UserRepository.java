@@ -30,4 +30,9 @@ public interface UserRepository extends JpaRepository<User, Long> {
     // SELECT EXISTS(SELECT 1 FROM users WHERE email = ?)
     // Returns true/false — used to check before creating (prevent duplicates)
     boolean existsByEmail(String email);
+
+    // SELECT EXISTS(SELECT 1 FROM users WHERE email = ? AND id != ?)
+    // Used during UPDATE to check if ANOTHER user already has this email
+    // Excludes the current user's ID so updating with same email doesn't fail
+    boolean existsByEmailAndIdNot(String email, Long id);
 }

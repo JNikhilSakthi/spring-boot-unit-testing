@@ -49,6 +49,18 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(error);
     }
 
+    // Handles: ResourceInUseException → 409 Conflict
+    // Triggered when: deleting a user who has associated products (FK constraint)
+    @ExceptionHandler(ResourceInUseException.class)
+    public ResponseEntity<Map<String, Object>> handleResourceInUse(ResourceInUseException ex) {
+        Map<String, Object> error = new HashMap<>();
+        error.put("timestamp", LocalDateTime.now().toString());
+        error.put("status", HttpStatus.CONFLICT.value());
+        error.put("error", "Conflict");
+        error.put("message", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(error);
+    }
+
     // Handles: MethodArgumentNotValidException → 400 Bad Request
     // Triggered when: @Valid fails on request body (blank name, invalid email, etc.)
     // Collects all field errors and returns them as a map:

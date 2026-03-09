@@ -18,6 +18,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
@@ -253,6 +254,7 @@ class ProductIntegrationTest {
     // ==================== Service Layer Directly ====================
 
     @Test
+    @Transactional  // Keeps Hibernate session open for lazy loading when calling service directly
     @DisplayName("Integration: Service layer with real User + Product repos")
     void serviceLayer_ShouldWorkWithBothRepositories() {
         // Create product (service fetches user internally)
@@ -270,5 +272,90 @@ class ProductIntegrationTest {
         productService.deleteProduct(created.getId());
         assertThrows(ResourceNotFoundException.class,
                 () -> productService.getProductById(created.getId()));
+    }
+
+    // ==================== NEW INTEGRATION EDGE CASES ====================
+
+    // Edge case: update product with SAME user — createdBy and updatedBy should be same
+    @Test
+    @DisplayName("Integration: Update product with same user, both refs should match")
+    void createAndUpdateProduct_SameUser_ShouldKeepBothRefs() throws Exception {
+        // Create product as John
+        ProductResponse created = productService.createProduct(productRequest);
+
+        // Update product as John (same user)
+        ProductRequest updateRequest = ProductRequest.builder()
+                .name("iPhone 15 Updated")
+                .description("Updated description")
+                .price(new BigDecimal("1099.99"))
+                .quantity(40)
+                .category("Electronics")
+                .userId(userId)  // same user
+                .build();
+
+        mockMvc.perform(put("/api/products/{id}", created.getId())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(updateRequest)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("iPhone 15 Updated"))
+                .andExpect(jsonPath("$.createdBy.id").value(userId))
+                .andExpect(jsonPath("$.updatedBy.id").value(userId))
+                .andExpect(jsonPath("$.createdBy.username").value("John Doe"))
+                .andExpect(jsonPath("$.updatedBy.username").value("John Doe"));
+    }
+
+    // Edge case: search by price range end-to-end
+    @Test
+    @DisplayName("Integration: Search products by price range end-to-end")
+    void searchProducts_ByPriceRange_EndToEnd() throws Exception {
+        // Create products with different prices
+        productService.createProduct(productRequest); // 999.99
+
+        productService.createProduct(ProductRequest.builder()
+                .name("Budget Phone")
+                .price(new BigDecimal("199.99"))
+                .quantity(100)
+                .category("Electronics")
+                .userId(userId)
+                .build());
+
+        productService.createProduct(ProductRequest.builder()
+                .name("Luxury Watch")
+                .price(new BigDecimal("5000.00"))
+                .quantity(5)
+                .category("Accessories")
+                .userId(userId)
+                .build());
+
+        // Search in range 100-1000 — should find iPhone (999.99) + Budget Phone (199.99)
+        mockMvc.perform(get("/api/products/price-range")
+                        .param("min", "100")
+                        .param("max", "1000"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(2)));
+
+        // Search in range 2000-6000 — should find only Luxury Watch (5000.00)
+        mockMvc.perform(get("/api/products/price-range")
+                        .param("min", "2000")
+                        .param("max", "6000"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].name").value("Luxury Watch"));
+    }
+
+    // Bug fix test: delete user who has products should return 409
+    @Test
+    @DisplayName("Integration: Delete user with products should return 409 Conflict")
+    void deleteUser_WhenProductsExist_ShouldReturn409() throws Exception {
+        // Create a product for the user
+        productService.createProduct(productRequest);
+
+        // Try to delete the user — should fail with 409
+        mockMvc.perform(delete("/api/users/{id}", userId))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message", org.hamcrest.Matchers.containsString("associated products")));
+
+        // User should still exist
+        assertTrue(userRepository.findById(userId).isPresent());
     }
 }

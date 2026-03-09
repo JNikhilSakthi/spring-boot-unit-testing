@@ -40,4 +40,9 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
 
     // findByQuantityGreaterThan → SELECT * FROM products WHERE quantity > ?
     List<Product> findByQuantityGreaterThan(Integer quantity);
+
+    // SELECT EXISTS(SELECT 1 FROM products WHERE created_by = ? OR updated_by = ?)
+    // Used to check if a user has any associated products before deleting the user
+    // Prevents FK constraint violation (ugly 500 error)
+    boolean existsByCreatedByIdOrUpdatedById(Long createdById, Long updatedById);
 }

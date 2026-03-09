@@ -4,6 +4,7 @@ import com.ecommerce.unittesting.controller.UserController;
 import com.ecommerce.unittesting.dto.UserRequest;
 import com.ecommerce.unittesting.dto.UserResponse;
 import com.ecommerce.unittesting.exception.DuplicateResourceException;
+import com.ecommerce.unittesting.exception.ResourceInUseException;
 import com.ecommerce.unittesting.exception.ResourceNotFoundException;
 import com.ecommerce.unittesting.service.UserService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -273,5 +274,83 @@ class UserControllerTest {
 
         mockMvc.perform(delete("/api/users/{id}", 99L))
                 .andExpect(status().isNotFound());
+    }
+
+    // ==================== NEW VALIDATION TESTS ====================
+
+    // Validation: all fields blank should return 400 with multiple errors
+    @Test
+    @DisplayName("POST /api/users — Should return 400 with multiple errors when all fields blank")
+    void createUser_WithAllFieldsBlank_ShouldReturn400() throws Exception {
+        UserRequest invalidRequest = UserRequest.builder()
+                .firstName("")
+                .lastName("")
+                .email("not-an-email")
+                .phone("")
+                .role("")
+                .build();
+
+        mockMvc.perform(post("/api/users")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(invalidRequest)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors.firstName").exists())
+                .andExpect(jsonPath("$.errors.lastName").exists())
+                .andExpect(jsonPath("$.errors.email").exists())
+                .andExpect(jsonPath("$.errors.phone").exists())
+                .andExpect(jsonPath("$.errors.role").exists());
+    }
+
+    // Validation: invalid email on update should return 400
+    @Test
+    @DisplayName("PUT /api/users/1 — Should return 400 when email is invalid on update")
+    void updateUser_WithInvalidEmail_ShouldReturn400() throws Exception {
+        UserRequest invalidRequest = UserRequest.builder()
+                .firstName("John")
+                .lastName("Doe")
+                .email("not-valid")
+                .phone("9876543210")
+                .role("CUSTOMER")
+                .build();
+
+        mockMvc.perform(put("/api/users/{id}", 1L)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(invalidRequest)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors.email").exists());
+    }
+
+    // Bug fix test: update with duplicate email should return 409
+    @Test
+    @DisplayName("PUT /api/users/1 — Should return 409 when updating to another user's email")
+    void updateUser_WithDuplicateEmail_ShouldReturn409() throws Exception {
+        when(userService.updateUser(eq(1L), any(UserRequest.class)))
+                .thenThrow(new DuplicateResourceException("Email already in use: jane@example.com"));
+
+        UserRequest conflictRequest = UserRequest.builder()
+                .firstName("John")
+                .lastName("Doe")
+                .email("jane@example.com")
+                .phone("9876543210")
+                .role("CUSTOMER")
+                .build();
+
+        mockMvc.perform(put("/api/users/{id}", 1L)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(conflictRequest)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value("Email already in use: jane@example.com"));
+    }
+
+    // Bug fix test: delete user with products should return 409
+    @Test
+    @DisplayName("DELETE /api/users/1 — Should return 409 when user has products")
+    void deleteUser_WhenHasProducts_ShouldReturn409() throws Exception {
+        doThrow(new ResourceInUseException("Cannot delete user with id: 1 — user has associated products"))
+                .when(userService).deleteUser(1L);
+
+        mockMvc.perform(delete("/api/users/{id}", 1L))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message", containsString("associated products")));
     }
 }

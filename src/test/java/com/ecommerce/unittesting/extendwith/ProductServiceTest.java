@@ -335,4 +335,121 @@ class ProductServiceTest {
 
         verify(productRepository, never()).delete(any(Product.class));
     }
+
+    // ==================== NEW EDGE CASES ====================
+
+    // Edge case: product with zero quantity (boundary value)
+    @Test
+    @DisplayName("Should create product with zero quantity — boundary value")
+    void createProduct_WithZeroQuantity_ShouldSucceed() {
+        ProductRequest zeroQtyRequest = ProductRequest.builder()
+                .name("Limited Edition")
+                .description("Out of stock item")
+                .price(new BigDecimal("499.99"))
+                .quantity(0)
+                .category("Electronics")
+                .userId(1L)
+                .build();
+
+        Product zeroQtyProduct = Product.builder()
+                .id(2L)
+                .name("Limited Edition")
+                .description("Out of stock item")
+                .price(new BigDecimal("499.99"))
+                .quantity(0)
+                .category("Electronics")
+                .createdBy(user)
+                .updatedBy(user)
+                .build();
+
+        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+        when(productRepository.save(any(Product.class))).thenReturn(zeroQtyProduct);
+
+        ProductResponse response = productService.createProduct(zeroQtyRequest);
+
+        assertEquals(0, response.getQuantity());
+        assertEquals("Limited Edition", response.getName());
+    }
+
+    // Edge case: very large price (BigDecimal boundary)
+    @Test
+    @DisplayName("Should create product with very large price — BigDecimal boundary")
+    void createProduct_WithMaxPrice_ShouldSucceed() {
+        BigDecimal largePrice = new BigDecimal("99999999.99");
+
+        ProductRequest maxPriceRequest = ProductRequest.builder()
+                .name("Luxury Item")
+                .price(largePrice)
+                .quantity(1)
+                .category("Luxury")
+                .userId(1L)
+                .build();
+
+        Product maxPriceProduct = Product.builder()
+                .id(3L)
+                .name("Luxury Item")
+                .price(largePrice)
+                .quantity(1)
+                .category("Luxury")
+                .createdBy(user)
+                .updatedBy(user)
+                .build();
+
+        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+        when(productRepository.save(any(Product.class))).thenReturn(maxPriceProduct);
+
+        ProductResponse response = productService.createProduct(maxPriceRequest);
+
+        assertEquals(largePrice, response.getPrice());
+    }
+
+    // Edge case: empty search string
+    @Test
+    @DisplayName("Should handle empty search string")
+    void searchProducts_WithEmptyString_ShouldReturnResults() {
+        when(productRepository.findByNameContainingIgnoreCase("")).thenReturn(List.of(product));
+
+        List<ProductResponse> products = productService.searchProducts("");
+
+        assertEquals(1, products.size());
+        verify(productRepository).findByNameContainingIgnoreCase("");
+    }
+
+    // Edge case: multiple categories — verify correct filtering
+    @Test
+    @DisplayName("Should return only matching category when multiple exist")
+    void getAllProducts_WhenMultipleCategories_ShouldFilterCorrectly() {
+        Product clothingProduct = Product.builder()
+                .id(2L)
+                .name("Nike Shoes")
+                .price(new BigDecimal("149.99"))
+                .quantity(100)
+                .category("Clothing")
+                .createdBy(user)
+                .updatedBy(user)
+                .build();
+
+        // Only return electronics when filtering
+        when(productRepository.findByCategory("Electronics")).thenReturn(List.of(product));
+
+        List<ProductResponse> electronics = productService.getProductsByCategory("Electronics");
+
+        assertEquals(1, electronics.size());
+        assertEquals("Electronics", electronics.get(0).getCategory());
+        assertEquals("iPhone 15", electronics.get(0).getName());
+    }
+
+    // Edge case: price range where min > max
+    @Test
+    @DisplayName("Should return empty list when min price > max price")
+    void getProductsByPriceRange_WhenMinGreaterThanMax_ShouldReturnEmpty() {
+        when(productRepository.findByPriceBetween(
+                new BigDecimal("1000"), new BigDecimal("100")))
+                .thenReturn(List.of());
+
+        List<ProductResponse> products = productService.getProductsByPriceRange(
+                new BigDecimal("1000"), new BigDecimal("100"));
+
+        assertTrue(products.isEmpty());
+    }
 }
