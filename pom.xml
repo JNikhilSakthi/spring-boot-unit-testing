@@ -54,6 +54,24 @@
             <optional>true</optional>
         </dependency>
 
+        <!-- Spring Boot WebFlux (for WebClient) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webflux</artifactId>
+        </dependency>
+
+        <!-- JAXB API (XML Marshalling/Unmarshalling) -->
+        <dependency>
+            <groupId>jakarta.xml.bind</groupId>
+            <artifactId>jakarta.xml.bind-api</artifactId>
+        </dependency>
+
+        <!-- JAXB Runtime Implementation -->
+        <dependency>
+            <groupId>org.glassfish.jaxb</groupId>
+            <artifactId>jaxb-runtime</artifactId>
+        </dependency>
+
         <!-- ==================== Testing Dependencies ==================== -->
 
         <!-- Spring Boot Test (JUnit 5 + Mockito + Spring Test) -->
