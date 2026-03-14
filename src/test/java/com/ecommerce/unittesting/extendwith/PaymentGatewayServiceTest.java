@@ -3,9 +3,11 @@ package com.ecommerce.unittesting.extendwith;
 import com.ecommerce.unittesting.dto.BankAuthResponse;
 import com.ecommerce.unittesting.dto.FraudCheckResponse;
 import com.ecommerce.unittesting.dto.PaymentRequest;
+import com.ecommerce.unittesting.dto.PaymentResponse;
 import com.ecommerce.unittesting.exception.*;
 import com.ecommerce.unittesting.service.impl.PaymentGatewayServiceImpl;
 import jakarta.xml.bind.JAXBContext;
+import jakarta.xml.bind.JAXBException;
 import jakarta.xml.bind.Marshaller;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -13,6 +15,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
+import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
@@ -881,6 +884,176 @@ class PaymentGatewayServiceTest {
         void maskCardNumber_shortNumber() {
             String masked = paymentGatewayService.maskCardNumber("12");
             assertThat(masked).isEqualTo("****");
+        }
+    }
+
+    // ======================== ADDITIONAL COVERAGE TESTS ========================
+
+    @Nested
+    @DisplayName("Additional Coverage - Blank Input Validations")
+    class BlankInputValidationTests {
+
+        @Test
+        @DisplayName("Should throw InvalidCardException for blank card number")
+        void processPayment_blankCardNumber() {
+            String xml = buildPaymentXml("   ", "John Doe", 12, 2028,
+                    "123", 500.0, "USD", "MERCH001", false, "Test");
+
+            assertThatThrownBy(() -> paymentGatewayService.processPayment(xml))
+                    .isInstanceOf(InvalidCardException.class)
+                    .hasMessageContaining("Card number is required");
+        }
+
+        @Test
+        @DisplayName("Should throw InvalidCVVException for blank CVV")
+        void processPayment_blankCVV() {
+            String xml = buildPaymentXml("4111111111111111", "John Doe", 12, 2028,
+                    "   ", 500.0, "USD", "MERCH001", false, "Test");
+
+            assertThatThrownBy(() -> paymentGatewayService.processPayment(xml))
+                    .isInstanceOf(InvalidCVVException.class)
+                    .hasMessageContaining("CVV is required");
+        }
+
+        @Test
+        @DisplayName("Should throw UnsupportedCurrencyException for blank currency")
+        void processPayment_blankCurrency() {
+            String xml = buildPaymentXml("4111111111111111", "John Doe", 12, 2028,
+                    "123", 500.0, "   ", "MERCH001", false, "Test");
+
+            assertThatThrownBy(() -> paymentGatewayService.processPayment(xml))
+                    .isInstanceOf(UnsupportedCurrencyException.class)
+                    .hasMessageContaining("required");
+        }
+    }
+
+    @Nested
+    @DisplayName("Additional Coverage - Card Type & Currency Gaps")
+    class AdditionalCoverageTests {
+
+        @Test
+        @DisplayName("Should detect UNKNOWN card type (starts with 9) and charge 3.0% default fee")
+        void processPayment_unknownCardType_3percentFee() {
+            // 9000000000000001 passes Luhn validation but doesn't match any known card prefix
+            String xml = buildPaymentXml("9000000000000001", "John Doe", 12, 2028,
+                    "123", 1000.0, "USD", "MERCH001", false, "Test");
+            mockBankApproval();
+
+            String result = paymentGatewayService.processPayment(xml);
+
+            assertThat(result).contains("<cardType>UNKNOWN</cardType>");
+            // default 3.0% of 1000 = 30.0
+            assertThat(result).contains("<processingFee>30.0</processingFee>");
+        }
+
+        @Test
+        @DisplayName("Should detect AMEX card starting with 34 prefix")
+        void processPayment_amexCard_startsWith34() {
+            // 340000000000009 is a valid Luhn AMEX card starting with 34
+            String xml = buildPaymentXml("340000000000009", "Jane Doe", 12, 2028,
+                    "1234", 500.0, "USD", "MERCH001", false, "Test");
+            mockBankApproval();
+
+            String result = paymentGatewayService.processPayment(xml);
+
+            assertThat(result).contains("<cardType>AMEX</cardType>");
+            // 2.5% of 500 = 12.5
+            assertThat(result).contains("<processingFee>12.5</processingFee>");
+        }
+
+        @Test
+        @DisplayName("Should process JPY payment with currency conversion")
+        void processPayment_successJPY_withConversion() {
+            String xml = buildValidPaymentXml(500.0, "JPY", false);
+            mockBankApproval();
+
+            String result = paymentGatewayService.processPayment(xml);
+
+            assertThat(result).contains("<status>SUCCESS</status>");
+            assertThat(result).contains("<exchangeRate>0.0067</exchangeRate>");
+            assertThat(result).contains("<convertedAmount>3.35</convertedAmount>");
+        }
+
+        @Test
+        @DisplayName("Should process AUD payment with currency conversion")
+        void processPayment_successAUD_withConversion() {
+            String xml = buildValidPaymentXml(500.0, "AUD", false);
+            mockBankApproval();
+
+            String result = paymentGatewayService.processPayment(xml);
+
+            assertThat(result).contains("<status>SUCCESS</status>");
+            assertThat(result).contains("<exchangeRate>0.65</exchangeRate>");
+            assertThat(result).contains("<convertedAmount>325.0</convertedAmount>");
+        }
+
+        @Test
+        @DisplayName("Should process CAD payment with currency conversion")
+        void processPayment_successCAD_withConversion() {
+            String xml = buildValidPaymentXml(500.0, "CAD", false);
+            mockBankApproval();
+
+            String result = paymentGatewayService.processPayment(xml);
+
+            assertThat(result).contains("<status>SUCCESS</status>");
+            assertThat(result).contains("<exchangeRate>0.74</exchangeRate>");
+            assertThat(result).contains("<convertedAmount>370.0</convertedAmount>");
+        }
+    }
+
+    @Nested
+    @DisplayName("Additional Coverage - Fraud & Marshal Edge Cases")
+    class FraudAndMarshalEdgeCaseTests {
+
+        @Test
+        @DisplayName("Should handle null fraud response from WebClient gracefully")
+        void processPayment_fraudResponse_null() {
+            String xml = buildValidPaymentXml(5000.0, "USD", false);
+
+            // Fraud service returns empty (null response)
+            when(fraudServiceClient.post()).thenReturn(requestBodyUriSpec);
+            when(bankServiceClient.post()).thenReturn(requestBodyUriSpec);
+            when(requestBodyUriSpec.uri(anyString())).thenReturn(requestBodySpec);
+            when(requestBodySpec.bodyValue(any())).thenReturn(requestHeadersSpec);
+            when(requestHeadersSpec.retrieve()).thenReturn(responseSpec);
+            when(responseSpec.bodyToMono(FraudCheckResponse.class))
+                    .thenReturn(Mono.empty());
+            when(responseSpec.bodyToMono(BankAuthResponse.class)).thenReturn(Mono.just(
+                    BankAuthResponse.builder()
+                            .transactionId("TXN-NULL-FRAUD")
+                            .referenceId("BNK-NULL")
+                            .status("APPROVED")
+                            .build()
+            ));
+
+            String result = paymentGatewayService.processPayment(xml);
+
+            assertThat(result).contains("<status>SUCCESS</status>");
+            assertThat(result).contains("<fraudStatus>CLEAR</fraudStatus>");
+            assertThat(result).contains("<riskScore>0</riskScore>");
+        }
+
+        @Test
+        @DisplayName("Should throw XmlProcessingException when response marshalling fails")
+        void processPayment_marshalFailure() throws Exception {
+            String xml = buildValidPaymentXml(500.0, "USD", false);
+            mockBankApproval();
+
+            // Create real context for unmarshal before mocking
+            JAXBContext realUnmarshalContext = JAXBContext.newInstance(PaymentRequest.class);
+
+            try (MockedStatic<JAXBContext> mockedJaxb = mockStatic(JAXBContext.class)) {
+                // Allow unmarshal (PaymentRequest) to work with real context
+                mockedJaxb.when(() -> JAXBContext.newInstance(PaymentRequest.class))
+                        .thenReturn(realUnmarshalContext);
+                // Make marshal (PaymentResponse) throw JAXBException
+                mockedJaxb.when(() -> JAXBContext.newInstance(PaymentResponse.class))
+                        .thenThrow(new JAXBException("Mock marshal failure"));
+
+                assertThatThrownBy(() -> paymentGatewayService.processPayment(xml))
+                        .isInstanceOf(XmlProcessingException.class)
+                        .hasMessageContaining("Failed to generate XML response");
+            }
         }
     }
 }

@@ -115,9 +115,6 @@ public class PaymentGatewayServiceImpl implements PaymentGatewayService {
                 throw new FraudServiceUnavailableException(
                         "Fraud detection service returned error: " + e.getStatusCode());
             } catch (Exception e) {
-                if (e instanceof FraudDetectedException) {
-                    throw (FraudDetectedException) e;
-                }
                 throw new FraudServiceUnavailableException(
                         "Fraud detection service is unavailable: " + e.getMessage());
             }
@@ -200,10 +197,6 @@ public class PaymentGatewayServiceImpl implements PaymentGatewayService {
             throw new PaymentDeclinedException(
                     "Bank service error: " + e.getStatusCode());
         } catch (Exception e) {
-            if (e instanceof PaymentDeclinedException || e instanceof InsufficientFundsException
-                    || e instanceof GatewayTimeoutException) {
-                throw (RuntimeException) e;
-            }
             throw new GatewayTimeoutException("Bank authorization failed: " + e.getMessage());
         }
 
@@ -377,11 +370,8 @@ public class PaymentGatewayServiceImpl implements PaymentGatewayService {
     }
 
     private double getExchangeRate(String currency) {
-        Double rate = EXCHANGE_RATES.get(currency.toUpperCase());
-        if (rate == null) {
-            throw new UnsupportedCurrencyException("No exchange rate found for currency: " + currency);
-        }
-        return rate;
+        // validateCurrency() already ensures only supported currencies reach here
+        return EXCHANGE_RATES.get(currency.toUpperCase());
     }
 
     public String maskCardNumber(String cardNumber) {
